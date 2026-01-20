@@ -107,8 +107,9 @@ SpatialGT/
 │   ├── mouse_stroke/        # Mouse stroke case study
 │   └── human_colitis/       # Human colitis case study
 │
-├── gene_embedding/           # Pretrained gene embeddings
+├── gene_embedding/           # Pretrained gene embeddings (download from HuggingFace)
 │   ├── vocab.json
+│   ├── id_to_gene.json
 │   └── pretrained_gene_embeddings.pt
 │
 ├── baseline/                 # Baseline methods
@@ -225,6 +226,7 @@ We provide pretrained and finetuned model checkpoints on Hugging Face:
 | SpatialGT-Pretrained | Pretrained on spatial transcriptomics atlas | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-Pretrained) |
 | SpatialGT-MouseStroke-Sham | Finetuned on mouse stroke Sham (control) | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-MouseStroke-Sham) |
 | SpatialGT-MouseStroke-PT | Finetuned on mouse stroke PT (stroke) | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-MouseStroke-PT) |
+| SpatialGT-GeneEmbedding | Pretrained gene embeddings | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-GeneEmbedding) |
 
 ### Download Models
 
@@ -233,6 +235,9 @@ We provide pretrained and finetuned model checkpoints on Hugging Face:
 huggingface-cli download Bgoood/SpatialGT-Pretrained --local-dir model/pretrain_ckpt
 huggingface-cli download Bgoood/SpatialGT-MouseStroke-Sham --local-dir model/sham_1_ft
 huggingface-cli download Bgoood/SpatialGT-MouseStroke-PT --local-dir model/pt_ft
+
+# Download pretrained gene embeddings
+huggingface-cli download Bgoood/SpatialGT-GeneEmbedding --local-dir gene_embedding
 ```
 
 Or using Python:
