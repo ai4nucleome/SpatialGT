@@ -1,0 +1,66 @@
+{
+  "MNP": {
+    "optimal_threshold": 1.5526008605957031,
+    "auc_roc": 0.8597287304763219,
+    "sensitivity": 0.6766595289079229,
+    "specificity": 0.8766707168894289,
+    "precision": 0.6088631984585742,
+    "f1_score": 0.6409736308316429,
+    "accuracy": 0.8324656885944155,
+    "youden_j": 0.5533302457973518,
+    "tp": 316,
+    "tn": 1443,
+    "fp": 203,
+    "fn": 151,
+    "celltype": "MNP",
+    "condition": "UC_combined",
+    "n_positive": 467,
+    "n_negative": 1646,
+    "marker_genes": [
+      "S100A4",
+      "TIMP1",
+      "S100A9",
+      "CD80",
+      "ITGAX",
+      "LYZ",
+      "IL1B"
+    ],
+    "positive_types": [
+      "05B-MNP_activated_inf"
+    ],
+    "negative_types": [
+      "05-MNP"
+    ]
+  },
+  "Fibroblast": {
+    "optimal_threshold": 1.9348249435424805,
+    "auc_roc": 0.9004354575495961,
+    "sensitivity": 0.899171270718232,
+    "specificity": 0.7834338021879884,
+    "precision": 0.40160394818013573,
+    "f1_score": 0.555223880597015,
+    "accuracy": 0.7995387276571209,
+    "youden_j": 0.6826050729062204,
+    "tp": 651,
+    "tn": 3509,
+    "fp": 970,
+    "fn": 73,
+    "celltype": "Fibroblast",
+    "condition": "UC_combined",
+    "n_positive": 724,
+    "n_negative": 4479,
+    "marker_genes": [
+      "TIMP1",
+      "IL1R1",
+      "CXCL14",
+      "CD44"
+    ],
+    "positive_types": [
+      "03C-activated_fibroblast"
+    ],
+    "negative_types": [
+      "03A-Myofibroblast",
+      "03B-Fibroblast"
+    ]
+  }
+}

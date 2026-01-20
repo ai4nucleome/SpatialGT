@@ -1,0 +1,147 @@
+# =============================================================================
+# SpatialGT .gitignore
+# =============================================================================
+
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==========================
+# Virtual Environments
+# ==========================
+venv/
+ENV/
+env/
+.venv/
+.conda/
+
+# ==========================
+# IDE
+# ==========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ==========================
+# Jupyter Notebook
+# ==========================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ==========================
+# Large Data Files (use Git LFS or external hosting)
+# ==========================
+# Model checkpoints
+model/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+
+# Gene embeddings (host separately)
+gene_embedding/*.pt
+
+# Example data (provide download script instead)
+example_data/
+data/
+
+# LMDB caches
+*.lmdb
+*.lmdb-lock
+
+# HDF5 files
+*.h5
+*.h5ad
+*.hdf5
+
+# Numpy files
+*.npy
+*.npz
+
+# Preprocessed caches
+*_preprocessed/
+*_lmdb/
+cache/
+
+# ==========================
+# Output and Results
+# ==========================
+output/
+output_*/
+results/
+logs/
+*.log
+wandb/
+runs/
+tensorboard/
+
+# ==========================
+# Temporary Files
+# ==========================
+*.tmp
+*.temp
+*.bak
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# ==========================
+# OS Generated
+# ==========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ==========================
+# Specific exclusions for this project
+# ==========================
+# Model checkpoints (hosted on Hugging Face)
+model/
+
+# Internal scripts (not for public release)
+scripts/
+
+# Example data (too large for GitHub, provide download instructions)
+example_data/
+
+# Environment folder
+env/
+
+# Test output directories
+perturbation/mouse_stroke/output_*/
+perturbation/human_colitis/output_*/
+
+# Keep these configuration files
+!gene_embedding/vocab.json
+!gene_embedding/id_to_gene.json

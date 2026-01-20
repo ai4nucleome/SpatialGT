@@ -1,0 +1,14 @@
+{
+  "mode": "celltype_comparison",
+  "condition": "UC",
+  "celltype_a": "MNP_normal",
+  "celltype_b": "MNP_activated",
+  "n_cells_a": 711,
+  "n_cells_b": 240,
+  "n_genes": 959,
+  "n_up": 168,
+  "n_down": 791,
+  "n_significant": 30,
+  "method": "wilcoxon",
+  "use_layer": "X_log1p"
+}

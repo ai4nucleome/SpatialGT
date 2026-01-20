@@ -1,0 +1,14 @@
+{
+  "mode": "celltype_comparison",
+  "condition": "UC",
+  "celltype_a": "Fibroblast_normal",
+  "celltype_b": "Fibroblast_activated",
+  "n_cells_a": 1929,
+  "n_cells_b": 265,
+  "n_genes": 959,
+  "n_up": 205,
+  "n_down": 754,
+  "n_significant": 114,
+  "method": "wilcoxon",
+  "use_layer": "X_log1p"
+}
