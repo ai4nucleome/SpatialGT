@@ -28,7 +28,6 @@
   - [Reconstruction](#reconstruction)
   - [Perturbation Simulation](#perturbation-simulation)
 - [Pretrained Models](#pretrained-models)
-- [Citation](#citation)
 - [License](#license)
 
 ## Installation
