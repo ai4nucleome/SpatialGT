@@ -36,7 +36,7 @@
 ### Option 1: Conda (Recommended)
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/SpatialGT.git
+git clone https://github.com/ai4nucleome/SpatialGT.git
 cd SpatialGT
 
 # Create and activate environment
@@ -47,7 +47,7 @@ conda activate spatialgt
 ### Option 2: Pip
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/SpatialGT.git
+git clone https://github.com/ai4nucleome/SpatialGT.git
 cd SpatialGT
 
 # Install PyTorch with CUDA 11.8
