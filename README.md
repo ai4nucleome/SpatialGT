@@ -163,8 +163,6 @@ Hugging Face:
 | Resource | Description | Link |
 |----------|-------------|------|
 | SpatialGT-Pretrained | Pretrained on the spatial transcriptomics atlas | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-Pretrained) |
-| SpatialGT-MouseStroke-Sham | Finetuned on mouse stroke Sham (control) | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-MouseStroke-Sham) |
-| SpatialGT-MouseStroke-PT | Finetuned on mouse stroke PT (stroke) | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-MouseStroke-PT) |
 | SpatialGT-GeneEmbedding | Pretrained gene embeddings | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-GeneEmbedding) |
 | SpatialGT-Environment | Packaged runtime environment | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-Environment) |
 
