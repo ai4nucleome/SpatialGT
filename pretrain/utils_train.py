@@ -269,11 +269,11 @@ def validate_center_indices(center_indices, batch_size):
 
 def get_cosine_schedule_with_warmup(
     optimizer, 
-    num_warmup_steps, 
-    num_training_steps, 
-    num_cycles=0.5, 
-    min_lr_ratio=0.1,
-    init_lr_ratio=0.1,
+                                    num_warmup_steps, 
+                                    num_training_steps, 
+                                    num_cycles=0.5, 
+                                    min_lr_ratio=0.1,
+                                    init_lr_ratio=0.1,
     last_epoch=-1
 ):
     """

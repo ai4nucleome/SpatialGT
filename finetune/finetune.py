@@ -192,12 +192,11 @@ def ensure_neighbors_index(cache_dir: Path, dataset_name: str) -> None:
     if try_load():
         return
 
-    # Rebuild minimal mapping for single-dataset finetune
-    pattern = str(neighbors_dir / f"neighbors_{dataset_name}_n*_v3.h5")
+    # Rebuild minimal mapping for single-dataset fine-tuning.
+    pattern = str(neighbors_dir / f"neighbors_{dataset_name}_n*.h5")
     matches = sorted(glob.glob(pattern))
     if not matches:
-        # Fallback: any v3 neighbor file
-        matches = sorted(glob.glob(str(neighbors_dir / "neighbors_*_n*_v3.h5")))
+        matches = sorted(glob.glob(str(neighbors_dir / "neighbors_*_n*.h5")))
     if not matches:
         raise FileNotFoundError(
             f"No neighbor h5 files found under {neighbors_dir}; "
@@ -319,6 +318,8 @@ def main():
                         help="Learning rate (default: 1e-4)")
     parser.add_argument("--batch_size", type=int, default=64,
                         help="Training batch size")
+    parser.add_argument("--eval_batch_size", type=int, default=64,
+                        help="Evaluation batch size")
     parser.add_argument("--max_steps", type=int, default=-1,
                         help="Max training steps (-1 = use epochs)")
     
@@ -374,7 +375,7 @@ def main():
         proc_path = Path(ds.get("cache_dir", "")) / "processed.h5ad"
         if proc_path.exists():
             dataset_paths.append(str(proc_path))
-    
+        
     # Fallback: scan cache_dir for processed.h5ad
     if not dataset_paths:
         logger.warning(f"Scanning {cache_dir} for processed.h5ad files...")
@@ -383,7 +384,7 @@ def main():
                 proc_path = subdir / "processed.h5ad"
                 if proc_path.exists():
                     dataset_paths.append(str(proc_path))
-    
+        
     if not dataset_paths:
         raise FileNotFoundError(f"No processed.h5ad found in {cache_dir}")
     
@@ -399,6 +400,7 @@ def main():
     config.num_epochs = args.num_epochs
     config.learning_rate = args.learning_rate
     config.max_steps = args.max_steps
+    config.eval_batch_size = args.eval_batch_size
     config.validation_split = args.validation_split
     config.validation_interval = args.validation_interval
     config.checkpoint_interval = args.checkpoint_interval
@@ -415,13 +417,13 @@ def main():
             raise ValueError("--lmdb_path and --lmdb_manifest_path required for lmdb mode")
         config.lmdb_path = args.lmdb_path
         config.lmdb_manifest_path = args.lmdb_manifest_path
-    
+
     seed_everything(config.random_seed)
-    
+
     # Ensure neighbor index
     first_dataset_name = Path(dataset_paths[0]).parent.name
     ensure_neighbors_index(cache_dir, first_dataset_name)
-    
+
     # Distributed training detection
     is_distributed = int(os.environ.get("WORLD_SIZE", 1)) > 1
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -429,7 +431,7 @@ def main():
         torch.cuda.set_device(local_rank)
         torch.distributed.init_process_group(backend="nccl")
         logger.info(f"Distributed: WORLD_SIZE={os.environ.get('WORLD_SIZE')}, LOCAL_RANK={local_rank}")
-    
+
     # Load data
     logger.info("Loading SpatialDataBank...")
     databank = SpatialDataBank(
@@ -455,7 +457,7 @@ def main():
     if config.validation_split > 0:
         val_loader = databank.get_data_loader(
             split="val",
-            batch_size=config.batch_size,
+            batch_size=config.eval_batch_size,
             shuffle=False,
             drop_last=False,
             num_workers=config.num_workers,
@@ -464,8 +466,13 @@ def main():
             use_distributed=is_distributed,
             persistent_workers=(config.num_workers > 0),
         )
-    
+
     logger.info(f"Train batches: {len(train_loader)}")
+    if len(train_loader) == 0:
+        raise RuntimeError(
+            "Fine-tuning train_loader has zero batches. Check cache metadata, "
+            "neighbor files, and batch_size/drop_last settings."
+        )
     
     # Create model
     logger.info("Creating model...")
@@ -497,7 +504,7 @@ def main():
         output_dir=str(output_dir),
         overwrite_output_dir=True,
         per_device_train_batch_size=config.batch_size,
-        per_device_eval_batch_size=config.batch_size,
+        per_device_eval_batch_size=config.eval_batch_size,
         gradient_accumulation_steps=config.accumulation_steps,
         max_steps=config.max_steps if config.max_steps > 0 else -1,
         num_train_epochs=float(config.num_epochs),
@@ -523,7 +530,7 @@ def main():
         prediction_loss_only=True,
         seed=config.random_seed,
     )
-    
+
     # Create trainer
     data_collator = FinetuneDataCollator(config)
     trainer = FinetuneTrainer(
@@ -539,12 +546,12 @@ def main():
         data_collator=data_collator,
         callbacks=[],
     )
-    
+
     # Start training
     logger.info(f"Starting fine-tuning for {config.num_epochs} epochs...")
     trainer.train()
     trainer.save_model()
-    
+
     # Save state dict for convenience
     state_dict_path = output_dir / "finetuned_model.pth"
     torch.save(model.state_dict(), str(state_dict_path))

@@ -24,8 +24,8 @@
 set -euo pipefail
 
 # ============ Configuration ============
-# GPU settings (modify based on your hardware)
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+# GPU settings. Override CUDA_VISIBLE_DEVICES before running for multi-GPU jobs.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 # Number of GPUs
 NUM_GPUS=${NUM_GPUS:-$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)}
@@ -36,28 +36,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Pretrained checkpoint (REQUIRED - modify this path)
-BASE_CHECKPOINT="${PROJECT_ROOT}/model/pretrained/checkpoint"
+BASE_CHECKPOINT="${BASE_CHECKPOINT:-${PROJECT_ROOT}/model/pretrained/checkpoint}"
 
 # Dataset cache directory (REQUIRED - modify this path)
-CACHE_DIR="${PROJECT_ROOT}/example_data/HBRC/HBRC_preprocessed"
+CACHE_DIR="${CACHE_DIR:-${PROJECT_ROOT}/example_data/HBRC/HBRC_preprocessed}"
 
 # Output directory for fine-tuned model
-OUTPUT_DIR="${PROJECT_ROOT}/output/finetune/HBRC"
+OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/output/finetune/HBRC}"
 
 # ============ Training Parameters ============
 # Fine-tuning strategy
-UNFREEZE_LAYERS=8       # Number of layers to unfreeze (8 = full fine-tuning)
-NUM_EPOCHS=100          # Training epochs
-LEARNING_RATE=1e-4      # Learning rate
-BATCH_SIZE=64           # Batch size per GPU
+UNFREEZE_LAYERS=${UNFREEZE_LAYERS:-8}       # Number of layers to unfreeze (8 = full fine-tuning)
+NUM_EPOCHS=${NUM_EPOCHS:-100}               # Training epochs
+LEARNING_RATE=${LEARNING_RATE:-1e-4}         # Learning rate
+BATCH_SIZE=${BATCH_SIZE:-64}                # Batch size per GPU
 
 # Checkpointing
-CHECKPOINT_INTERVAL=500 # Save every N steps
-SAVE_TOTAL_LIMIT=10     # Keep last N checkpoints
+CHECKPOINT_INTERVAL=${CHECKPOINT_INTERVAL:-500} # Save every N steps
+SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-10}        # Keep last N checkpoints
 
 # Data loading
-NUM_WORKERS=1           # Workers (use 1 for H5 mode)
-CACHE_MODE="h5"         # Cache mode: h5 or lmdb
+NUM_WORKERS=${NUM_WORKERS:-1}                    # Workers (use 1 for H5 mode)
+CACHE_MODE="${CACHE_MODE:-h5}"                   # Cache mode: h5 or lmdb
 
 # ============ Log Directory ============
 LOG_DIR="${OUTPUT_DIR}/logs"
@@ -107,40 +107,42 @@ echo ""
 mkdir -p "$OUTPUT_DIR"
 
 # Build command
-CMD="python ${SCRIPT_DIR}/finetune.py \
-    --base_ckpt ${BASE_CHECKPOINT} \
-    --cache_dir ${CACHE_DIR} \
-    --output_dir ${OUTPUT_DIR} \
-    --unfreeze_last_n ${UNFREEZE_LAYERS} \
-    --num_epochs ${NUM_EPOCHS} \
-    --learning_rate ${LEARNING_RATE} \
-    --batch_size ${BATCH_SIZE} \
-    --num_workers ${NUM_WORKERS} \
-    --cache_mode ${CACHE_MODE} \
-    --checkpoint_interval ${CHECKPOINT_INTERVAL} \
-    --save_total_limit ${SAVE_TOTAL_LIMIT}"
+CMD=(
+    python "${SCRIPT_DIR}/finetune.py"
+    --base_ckpt "${BASE_CHECKPOINT}"
+    --cache_dir "${CACHE_DIR}"
+    --output_dir "${OUTPUT_DIR}"
+    --unfreeze_last_n "${UNFREEZE_LAYERS}"
+    --num_epochs "${NUM_EPOCHS}"
+    --learning_rate "${LEARNING_RATE}"
+    --batch_size "${BATCH_SIZE}"
+    --num_workers "${NUM_WORKERS}"
+    --cache_mode "${CACHE_MODE}"
+    --checkpoint_interval "${CHECKPOINT_INTERVAL}"
+    --save_total_limit "${SAVE_TOTAL_LIMIT}"
+)
 
 if [ "$MULTI_GPU" = true ] || [ "$NUM_GPUS" -gt 1 ]; then
     echo "Mode: Multi-GPU (torchrun)"
     exec torchrun \
         --standalone \
         --nnodes=1 \
-        --nproc_per_node=$NUM_GPUS \
+        --nproc_per_node="$NUM_GPUS" \
         --master_addr=127.0.0.1 \
         --master_port=29501 \
-        ${SCRIPT_DIR}/finetune.py \
-        --base_ckpt ${BASE_CHECKPOINT} \
-        --cache_dir ${CACHE_DIR} \
-        --output_dir ${OUTPUT_DIR} \
-        --unfreeze_last_n ${UNFREEZE_LAYERS} \
-        --num_epochs ${NUM_EPOCHS} \
-        --learning_rate ${LEARNING_RATE} \
-        --batch_size ${BATCH_SIZE} \
-        --num_workers ${NUM_WORKERS} \
-        --cache_mode ${CACHE_MODE} \
-        --checkpoint_interval ${CHECKPOINT_INTERVAL} \
-        --save_total_limit ${SAVE_TOTAL_LIMIT}
+        "${SCRIPT_DIR}/finetune.py" \
+        --base_ckpt "${BASE_CHECKPOINT}" \
+        --cache_dir "${CACHE_DIR}" \
+        --output_dir "${OUTPUT_DIR}" \
+        --unfreeze_last_n "${UNFREEZE_LAYERS}" \
+        --num_epochs "${NUM_EPOCHS}" \
+        --learning_rate "${LEARNING_RATE}" \
+        --batch_size "${BATCH_SIZE}" \
+        --num_workers "${NUM_WORKERS}" \
+        --cache_mode "${CACHE_MODE}" \
+        --checkpoint_interval "${CHECKPOINT_INTERVAL}" \
+        --save_total_limit "${SAVE_TOTAL_LIMIT}"
 else
     echo "Mode: Single GPU"
-    exec $CMD
+    exec "${CMD[@]}"
 fi

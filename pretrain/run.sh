@@ -56,13 +56,13 @@ echo "GPUs: $CUDA_VISIBLE_DEVICES ($NUM_GPUS total)"
 
 if [ "$MULTI_GPU" = true ] || [ "$NUM_GPUS" -gt 1 ]; then
     echo "Mode: Multi-GPU (torchrun)"
-    exec torchrun \
-        --standalone \
-        --nnodes=1 \
+exec torchrun \
+  --standalone \
+  --nnodes=1 \
         --nproc_per_node=$NUM_GPUS \
-        --master_addr=127.0.0.1 \
-        --master_port=12398 \
-        run_pretrain.py
+  --master_addr=127.0.0.1 \
+  --master_port=12398 \
+  run_pretrain.py
 else
     echo "Mode: Single GPU"
     exec python run_pretrain.py

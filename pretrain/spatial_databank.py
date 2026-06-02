@@ -256,14 +256,15 @@ class Preprocessor:
                 )
                 key_to_process = self.result_log1p_key
             sc.pp.log1p(adata, layer=key_to_process)
-        
+
         # Step 6: Select highly variable genes
-        self._process_hvg(adata, batch_key, key_to_process)
-        adata = adata[:, adata.var['highly_variable']].copy()
-        
+        if self.subset_hvg:
+            self._process_hvg(adata, batch_key, key_to_process)
+            adata = adata[:, adata.var["highly_variable"]].copy()
+
         # Step 7: Filter genes by vocabulary
         genes = adata.var_names.tolist()
-        
+
         # Build case-insensitive vocabulary mapping
         vocab_lower_to_idx = {}
         if self.vocab is None:
@@ -281,21 +282,22 @@ class Preprocessor:
         genes_lower = [g.lower() for g in genes]
         gene_token_ids = np.array([vocab_lower_to_idx.get(g_low, -1) for g_low in genes_lower], dtype=int)
         valid_genes_mask = gene_token_ids >= 0
-        
+
         n_genes_before = len(genes)
-        n_genes_after = sum(valid_genes_mask)
+        n_genes_after = int(valid_genes_mask.sum())
         logger.info(f"Gene filtering: kept {n_genes_after}/{n_genes_before} genes in vocabulary")
 
-        if not all(valid_genes_mask):
+        if not valid_genes_mask.all():
             adata = adata[:, valid_genes_mask].copy()
-        
+
         # Step 8: Remove zero-expression cells
-        gene_sums = adata.layers["X_log1p"].sum(axis=1)
+        expr_layer = self.result_log1p_key if self.result_log1p_key in adata.layers else key_to_process
+        gene_sums = adata.layers[expr_layer].sum(axis=1)
         if isinstance(gene_sums, np.matrix):
             gene_sums = gene_sums.A1
         cells_to_keep = gene_sums > 0
-        if not all(cells_to_keep):
-            n_removed = sum(~cells_to_keep)
+        if not cells_to_keep.all():
+            n_removed = int((~cells_to_keep).sum())
             logger.info(f"Removed {n_removed} zero-expression cells after preprocessing")
             adata = adata[cells_to_keep].copy()
 
@@ -1807,14 +1809,14 @@ class SpatialDataBank:
                             if candidate.exists():
                                 final_path = str(candidate)
                         if final_path is None and ds_name:
-                            pattern = str(neighbors_dir / f"neighbors_{ds_name}_n*_v3.h5")
+                            pattern = str(neighbors_dir / f"neighbors_{ds_name}_n*.h5")
                             matches = sorted(_glob.glob(pattern))
                             if matches:
                                 prefer = None
                                 desired_k = int(getattr(self.config, 'max_neighbors', 0))
                                 for m in matches:
                                     base = os.path.basename(m)
-                                    m_k = _re.search(r"_n(\d+)_v3\.h5$", base)
+                                    m_k = _re.search(r"_n(\d+)(?:_[^.]*)?\.h5$", base)
                                     if m_k and int(m_k.group(1)) == desired_k:
                                         prefer = m
                                         break
@@ -1854,7 +1856,7 @@ class SpatialDataBank:
                 try:
                     ds_name = self.metadata["datasets"][dataset_idx].get("name")
                     import glob as _glob
-                    pattern = str((self.cache_dir / "neighbors" / f"neighbors_{ds_name}_n*_v3.h5"))
+                    pattern = str((self.cache_dir / "neighbors" / f"neighbors_{ds_name}_n*.h5"))
                     matches = _glob.glob(pattern)
                     if matches:
                         neighbors_file_path = matches[0]
@@ -2394,11 +2396,11 @@ class SpatialDataBank:
         vocab_path = self.config.vocab_file
         vocab_lower_to_idx = {}
         with open(vocab_path, "r", encoding="utf-8") as f:
-            vocab_json = json.load(f)
+                vocab_json = json.load(f)
         for tok, idx in vocab_json.items():
-            low = tok.lower()
-            if low not in vocab_lower_to_idx:
-                vocab_lower_to_idx[low] = idx
+                low = tok.lower()
+                if low not in vocab_lower_to_idx:
+                    vocab_lower_to_idx[low] = idx
         vocab = vocab_lower_to_idx
         
         # Convert gene names to lowercase for matching
@@ -3576,7 +3578,7 @@ def optimized_collate_fn(batch):
         pad_value=config["pad_value"],
         include_zero_gene=False  # Non-zero data only includes non-zero genes
     )
-    
+
     # Filter by center rows only (avoid discarding batch due to some all-zero neighbors)
     # Skip this check in inference mode as masked spots may be initialized to zero
     eff_mask = full_data["attention_mask"].to(torch.bool)         # [num_spots, max_seq_len]

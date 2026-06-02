@@ -1,263 +1,88 @@
-# SpatialGT: Spatial Graph Transformer for Spatial Transcriptomics
+# SpatialGT
 
-<p align="center">
-  <img src="assets/SpatialGT_Arch_v2.drawio.png" width="800">
-</p>
+SpatialGT is a graph transformer framework for spatial transcriptomics
+reconstruction and virtual perturbation analysis. The public repository is
+organized around the **SpatialGT Agent UI**, which provides an interactive
+workflow for loading user-provided spatial transcriptomics data, preprocessing
+the section, configuring perturbations, running SpatialGT inference, and
+reviewing results.
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch 2.0+](https://img.shields.io/badge/pytorch-2.0+-red.svg)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+Repository: [https://github.com/ai4nucleome/SpatialGT](https://github.com/ai4nucleome/SpatialGT)
 
-## Overview
+## Agent UI
 
-**SpatialGT** is a graph transformer model for spatial transcriptomics data analysis. It leverages spatial context through neighbor-aware attention mechanisms to enable:
+The recommended entry point is the Streamlit Agent UI in
+`spatialgt_agent_ui/`. The UI supports both natural-language control and manual
+configuration panels.
 
-- 🗺️ **Spatial Context Learning**: Pre-train on large-scale spatial transcriptomics data
-- 🧬 **Gene Expression Reconstruction**: Predict masked gene expression from spatial context
-- 🔬 **Perturbation Simulation**: Simulate transcriptomic responses to virtual perturbations
+Typical workflow in the Agent UI:
 
-## Table of Contents
+1. Load a user-provided `.h5ad` spatial transcriptomics file.
+2. Run preprocessing and build the LMDB cache.
+3. Optionally load a label CSV and select perturbation target spots.
+4. Load a SpatialGT checkpoint from Hugging Face or a local path.
+5. Upload a DEG file or define manual gene edits.
+6. Run dual-line virtual perturbation inference.
+7. Review convergence curves, selected step, and saved output paths.
 
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Repository Structure](#repository-structure)
-- [Data Preparation](#data-preparation)
-- [Usage](#usage)
-  - [Pretraining](#pretraining)
-  - [Finetuning](#finetuning)
-  - [Reconstruction](#reconstruction)
-  - [Perturbation Simulation](#perturbation-simulation)
-- [Pretrained Models](#pretrained-models)
-- [License](#license)
+See [`spatialgt_agent_ui/USER_GUIDE.md`](spatialgt_agent_ui/USER_GUIDE.md) for
+the Agent UI launch and usage guide.
 
-## Installation
+## Runtime Environment
 
-### Option 1: Conda (Recommended)
+A packaged SpatialGT runtime environment is provided on Hugging Face so users
+can run the Agent UI without rebuilding the Python stack manually:
 
-```bash
-git clone https://github.com/ai4nucleome/SpatialGT.git
-cd SpatialGT
+- [SpatialGT Environment](https://huggingface.co/Bgoood/SpatialGT-Environment)
 
-# Create and activate environment
-conda env create -f env/environment.yml
-conda activate spatialgt
-```
-
-### Option 2: Pip
+After downloading `spatialgt_env.tar.gz`, place it under `environment/` in the
+repository root and extract it:
 
 ```bash
-git clone https://github.com/ai4nucleome/SpatialGT.git
-cd SpatialGT
-
-# Install PyTorch with CUDA 11.8
-pip install torch==2.2.2+cu118 torchvision==0.17.2+cu118 torchaudio==2.2.2+cu118 \
-    -f https://download.pytorch.org/whl/torch_stable.html
-
-# Install dependencies
-pip install -r requirements.txt
+mkdir -p environment
+tar -xzf environment/spatialgt_env.tar.gz -C environment
 ```
 
-See [env/INSTALL.md](env/INSTALL.md) for detailed installation instructions.
-
-## Quick Start
-
-```python
-import torch
-from pretrain.model_spatialpt import SpatialNeighborTransformer
-from pretrain.Config import Config
-
-# Load configuration
-config = Config()
-
-# Initialize model
-model = SpatialNeighborTransformer(config)
-
-# Load pretrained weights
-checkpoint = torch.load("path/to/checkpoint.pt")
-model.load_state_dict(checkpoint)
-
-# Your spatial transcriptomics data
-# ...
-```
-
-## Repository Structure
-
-```
-SpatialGT/
-├── pretrain/                 # Pretraining module
-│   ├── Config.py            # Configuration
-│   ├── model_spatialpt.py   # Model architecture
-│   ├── spatial_databank.py  # Data loading utilities
-│   ├── run_pretrain.py      # Training script
-│   └── run.sh               # Launch script
-│
-├── finetune/                 # Finetuning module
-│   ├── Config.py            # Finetuning configuration
-│   ├── finetune.py          # Finetuning script
-│   └── finetune.sh          # Launch script
-│
-├── reconstruction/           # Expression reconstruction
-│   ├── spatialgt_reconstruction.py
-│   ├── knn_reconstruction.py      # KNN baseline
-│   ├── sedr_reconstruction.py     # SEDR baseline
-│   └── run_reconstruction.sh
-│
-├── perturbation/             # Perturbation simulation
-│   ├── mouse_stroke/        # Mouse stroke case study
-│   └── human_colitis/       # Human colitis case study
-│
-├── gene_embedding/           # Pretrained gene embeddings (download from HuggingFace)
-│   ├── vocab.json
-│   ├── id_to_gene.json
-│   └── pretrained_gene_embeddings.pt
-│
-├── baseline/                 # Baseline methods
-│   └── SEDR/                # SEDR implementation
-│
-├── env/                      # Environment setup
-│   ├── environment.yml
-│   └── INSTALL.md
-│
-└── requirements.txt
-```
-
-## Data Preparation
-
-### 1. Prepare H5AD Files
-
-Your spatial transcriptomics data should be in AnnData format (`.h5ad`) with:
-- `adata.X`: Gene expression matrix (cells × genes)
-- `adata.obsm['spatial']`: Spatial coordinates
-- `adata.var_names`: Gene symbols
-
-### 2. Preprocess Data
+Then launch the Agent UI:
 
 ```bash
-# Preprocess your data for training
-python pretrain/preprocess.py \
-    --dataset_list /path/to/datalist.txt \
-    --cache_dir /path/to/cache \
-    --n_neighbors 8
+bash spatialgt_agent_ui/run.sh
 ```
 
-The `datalist.txt` should contain paths to your H5AD files, one per line.
-
-## Usage
-
-### Pretraining
+The launcher automatically detects `environment/spatialgt`. You can also pass a
+custom compatible environment:
 
 ```bash
-cd pretrain
-
-# Single GPU
-python run_pretrain.py \
-    --dataset_list /path/to/datalist.txt \
-    --output_dir /path/to/output
-
-# Multi-GPU (distributed)
-bash run.sh
+bash spatialgt_agent_ui/run.sh --spatialgt /path/to/environment/spatialgt
 ```
 
-### Finetuning
+## Large Files And Models
 
-```bash
-cd finetune
+Large runtime assets are hosted outside GitHub. Model checkpoints, gene
+embeddings, example data, outputs, and packaged environments are intentionally
+excluded from this repository.
 
-# Finetune on your dataset
-bash finetune.sh \
-    --base_ckpt /path/to/pretrained/checkpoint \
-    --cache_dir /path/to/your/data \
-    --output_dir /path/to/output
-```
+Available Hugging Face resources include:
 
-Key parameters:
-- `--unfreeze_last_n`: Number of transformer layers to unfreeze (default: 8, all layers)
-- `--num_epochs`: Training epochs (default: 100)
-- `--learning_rate`: Learning rate (default: 1e-4)
+- [SpatialGT-Pretrained](https://huggingface.co/Bgoood/SpatialGT-Pretrained)
+- [SpatialGT-GeneEmbedding](https://huggingface.co/Bgoood/SpatialGT-GeneEmbedding)
+- [SpatialGT Environment](https://huggingface.co/Bgoood/SpatialGT-Environment)
 
-### Reconstruction
+## Repository Contents
 
-```bash
-cd reconstruction
-
-# SpatialGT reconstruction (10 steps)
-bash run_reconstruction.sh --method spatialgt --n_spots 100
-
-# SEDR baseline (1 step)
-bash run_reconstruction.sh --method sedr --n_spots 100
-
-# KNN baseline (10 steps)
-bash run_reconstruction.sh --method knn --n_spots 100
-```
-
-### Perturbation Simulation
-
-#### Mouse Stroke Case
-
-```bash
-cd perturbation/mouse_stroke
-
-# Run perturbation with ICA region
-bash run_perturbation.sh output_name \
-    --perturb_mode random \
-    --n_spots 80 \
-    --steps 10
-```
-
-#### Human Colitis Case
-
-```bash
-cd perturbation/human_colitis
-
-# Run perturbation on activated MNPs
-python colitis_spatialgt_perturb_eval.py \
-    --sample HS5_UC_R_0 \
-    --perturb_target MNP_activated \
-    --steps 10
-```
-
-## Pretrained Models
-
-We provide pretrained and finetuned model checkpoints on Hugging Face:
-
-| Model | Description | Download |
-|-------|-------------|----------|
-| SpatialGT-Pretrained | Pretrained on spatial transcriptomics atlas | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-Pretrained) |
-| SpatialGT-MouseStroke-Sham | Finetuned on mouse stroke Sham (control) | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-MouseStroke-Sham) |
-| SpatialGT-MouseStroke-PT | Finetuned on mouse stroke PT (stroke) | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-MouseStroke-PT) |
-| SpatialGT-GeneEmbedding | Pretrained gene embeddings | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-GeneEmbedding) |
-
-### Download Models
-
-```bash
-# Using huggingface-cli
-huggingface-cli download Bgoood/SpatialGT-Pretrained --local-dir model/pretrain_ckpt
-huggingface-cli download Bgoood/SpatialGT-MouseStroke-Sham --local-dir model/sham_1_ft
-huggingface-cli download Bgoood/SpatialGT-MouseStroke-PT --local-dir model/pt_ft
-
-# Download pretrained gene embeddings
-huggingface-cli download Bgoood/SpatialGT-GeneEmbedding --local-dir gene_embedding
-```
-
-Or using Python:
-
-```python
-from huggingface_hub import snapshot_download
-
-# Download pretrained model
-snapshot_download(repo_id="Bgoood/SpatialGT-Pretrained", local_dir="model/pretrain_ckpt")
-```
+- `spatialgt_agent_ui/`: Agent-driven Streamlit user interface.
+- `pretrain/`: SpatialGT model and data bank utilities.
+- `finetune/`: Finetuning utilities used by the Agent UI.
+- `reconstruction/`: Reconstruction and denoising scripts.
+- `perturbation/`: Public perturbation case-study scripts.
+- `baseline/`: Baseline method dependencies.
+- `requirements.txt`: Python dependency list for source installations.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE).
 
 ## Contact
 
-For questions and issues, please open a GitHub issue or contact [yxu662@connect.hkust-gz.edu.cn](mailto:yxu662@connect.hkust-gz.edu.cn).
-
-## Acknowledgments
-
-- [Scanpy](https://scanpy.readthedocs.io/) for single-cell analysis tools
-- [Hugging Face Transformers](https://huggingface.co/transformers/) for transformer implementations
-- [SEDR](https://github.com/JinmiaoChenLab/SEDR) for the baseline method
+For questions and issues, please open a GitHub issue or contact
+[yxu662@connect.hkust-gz.edu.cn](mailto:yxu662@connect.hkust-gz.edu.cn).

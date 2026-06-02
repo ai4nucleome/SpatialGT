@@ -25,7 +25,7 @@ from pathlib import Path
 import torch
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use('Agg')  
 
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -130,7 +130,7 @@ class SpatialTrainer(Trainer):
         # Log step progress (main process only)
         try:
             is_main = self._is_main_process()
-            
+
             if is_main:
                 interval = max(1, int(self._step_log_interval))
                 current_step = int(self.state.global_step)
@@ -355,7 +355,7 @@ def train_with_trainer(config, args):
         import traceback
         logger.error(traceback.format_exc())
         return
-
+    
     # Create model
     logger.info("Creating model...")
     model = SpatialNeighborTransformer(config)
@@ -441,7 +441,7 @@ def train_with_trainer(config, args):
     
     # Start training
     logger.info("Starting training...")
-    
+   
     if args.get('resume_from_checkpoint'):
         train_result = trainer.train(resume_from_checkpoint=args['resume_from_checkpoint'])
     else:

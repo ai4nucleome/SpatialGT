@@ -179,7 +179,7 @@ def create_sparse_adjacency_matrix(all_neighbors, n_spots):
 
 
 def save_neighbors_to_hdf5(neighbors_file, dataset_name, dataset_idx, max_neighbors, 
-                           start_idx, end_idx, all_neighbors, all_distances):
+                          start_idx, end_idx, all_neighbors, all_distances):
     """
     Save neighbor relationships to HDF5 file.
     
@@ -358,7 +358,7 @@ def process_dataset_neighbors(databank, dataset_idx, cache_dir, config, force_re
             np.savez_compressed(f, is_sparse=True, shape=adj_sparse.shape)
         
         logger.info(f"Sparse adjacency matrix saved: {adj_file_sparse}")
-
+        
         # Save detailed neighbor info to HDF5
         save_neighbors_to_hdf5(
             dataset_neighbors_file, dataset_name, dataset_idx, 
@@ -445,7 +445,7 @@ def main_preprocess():
     
     # Override config with command line arguments
     config.max_neighbors = args.max_neighbors
-    
+
     # Get subdirectories helper
     def get_subdirectories(path):
         """Get all subdirectory paths under the specified path."""
@@ -465,7 +465,7 @@ def main_preprocess():
                 dataset_paths.extend(h5ad_files)
             else:
                 logger.warning(f"No .h5ad files found in: {folder}")
-        
+
         logger.info(f"Found {len(dataset_paths)} preprocessed h5ad files")
     else:
         logger.warning("Dataset list not specified or file not found, using default path")
@@ -606,4 +606,4 @@ if __name__ == "__main__":
         main_preprocess()
     except Exception as e:
         logger.exception(f"Error during preprocessing: {e}")
-        sys.exit(1)
+        sys.exit(1) 

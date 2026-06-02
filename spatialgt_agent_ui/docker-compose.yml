@@ -1,0 +1,26 @@
+services:
+  spatialgt-ui:
+    build:
+      context: ../
+      dockerfile: spatialgt_agent_ui/Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - type: bind
+        source: ../gene_embedding
+        target: /app/gene_embedding
+      - type: bind
+        source: ../output
+        target: /app/output
+    env_file:
+      - .env.example
+    environment:
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped

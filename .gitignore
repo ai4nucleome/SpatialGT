@@ -66,11 +66,14 @@ checkpoints/
 *.bin
 
 # Gene embeddings (host separately)
-gene_embedding/*.pt
+gene_embedding/
 
 # Example data (provide download script instead)
 example_data/
 data/
+
+# Packaged runtime environments (host separately)
+environment/
 
 # LMDB caches
 *.lmdb
@@ -137,11 +140,10 @@ example_data/
 
 # Environment folder
 env/
+environment/
 
 # Test output directories
 perturbation/mouse_stroke/output_*/
 perturbation/human_colitis/output_*/
+perturbation/human_colitis/
 
-# Keep these configuration files
-!gene_embedding/vocab.json
-!gene_embedding/id_to_gene.json

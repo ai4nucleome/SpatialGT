@@ -122,7 +122,7 @@ class Config:
     def to_json_string(self):
         """Return JSON string representation of config."""
         return json.dumps(self.to_dict(), indent=2, sort_keys=True)
-    
+
     def save(self, path: str):
         """Save configuration to a JSON file."""
         with open(path, 'w') as f:
