@@ -16,20 +16,27 @@ Two directions per pair:
 Perturbation formula (linear interpolation):
   perturbed_expr = (1 - alpha) * source_neighbor_expr + alpha * target_neighbor_expr
 
+Default dual-line base (--x0_source=recon, Algorithm 1):
+  The dual-line base state is the DENOISED expression X_0 = M(X) = recon1,
+  not the raw input. Perturbation is interpolated on recon1 neighbors, and the
+  fixed control prediction (X line) is X_hat = M(X_0) = recon2. This removes the
+  raw reconstruction residual from the comparison. Pass --x0_source=raw to run
+  the raw-input legacy mode (X_0 = raw input, X line = recon1).
+
 Dual-line error cancellation:
-  X line:  X_k = SpatialGT(X_0)
+  X line:  X_k = SpatialGT(X_0)        # X_0 = recon1 (recon) or raw (legacy)
   X' line: X'_k_raw = SpatialGT(X'_{k-1}_true)
   delta_k = X'_k_raw - X_k
   X'_k_true = X'_0 + delta_k
   X'_k_true(frozen) = X'_0(frozen)
 
 Metrics (center spot vs target center spot):
-  Pearson r and MSE against raw target expression
+  Pearson correlation coefficient (PCC) and RMSE
 
 Output structure:
   {out_dir}/{dataset}/{direction}/pair{i}/hop{h}_k{k}_alpha{a}/
     |-- step_expressions/        # per-step gene expression
-    |-- convergence_report.json  # step MSE convergence
+    |-- convergence_report.json  # step RMSE convergence
     |-- metrics.json             # similarity metrics
     `-- manifest.json            # experiment metadata
 """
@@ -53,7 +60,7 @@ from scipy import stats
 from tqdm import tqdm
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _SCRIPT_DIR.parent
+_REPO_ROOT = _SCRIPT_DIR.parents[1]
 _PRETRAIN_DIR = _REPO_ROOT / "pretrain"
 for _path in (_REPO_ROOT, _PRETRAIN_DIR, _SCRIPT_DIR):
     if str(_path) not in sys.path:
@@ -354,6 +361,7 @@ def create_interpolated_perturbation(
     k: int,
     alpha: float,
     seed: int,
+    value_source: Optional[Dict[int, Dict[str, np.ndarray]]] = None,
 ) -> Dict[int, Dict[str, np.ndarray]]:
     """
     Replace k source neighbors with interpolated expressions.
@@ -363,6 +371,11 @@ def create_interpolated_perturbation(
     target_neighbors are used as the "template" for what the neighbors would
     look like in the target niche. We cycle through target_neighbors if
     len(target_neighbors) < k.
+
+    value_source: optional precomputed expression state (e.g. recon1 = M(X)).
+      When provided, the source/target neighbor expressions are taken from this
+      state instead of the raw databank, so the perturbation is applied in the
+      denoised (reconstructed) space (Algorithm 1, X_0 = M(X)).
 
     Returns overrides dict: {global_idx: {"gene_ids": ..., "raw_normed_values": ...}}
     """
@@ -375,16 +388,21 @@ def create_interpolated_perturbation(
 
     selected = rng.sample(source_neighbors, k)
 
+    def _get_expr(idx: int):
+        if value_source is not None and int(idx) in value_source:
+            d = value_source[int(idx)]
+            return (np.asarray(d["gene_ids"], dtype=np.int64),
+                    np.asarray(d["raw_normed_values"], dtype=np.float32))
+        d = databank.get_spot_data(int(idx))
+        return (np.asarray(d["gene_ids"], dtype=np.int64),
+                np.asarray(d["raw_normed_values"], dtype=np.float32))
+
     overrides: Dict[int, Dict[str, np.ndarray]] = {}
     for i, src_idx in enumerate(selected):
-        src_data = databank.get_spot_data(src_idx)
-        src_gids = np.asarray(src_data["gene_ids"], dtype=np.int64)
-        src_vals = np.asarray(src_data["raw_normed_values"], dtype=np.float32)
+        src_gids, src_vals = _get_expr(src_idx)
 
         tgt_idx = target_neighbors[i % len(target_neighbors)]
-        tgt_data = databank.get_spot_data(tgt_idx)
-        tgt_gids = np.asarray(tgt_data["gene_ids"], dtype=np.int64)
-        tgt_vals = np.asarray(tgt_data["raw_normed_values"], dtype=np.float32)
+        tgt_gids, tgt_vals = _get_expr(tgt_idx)
 
         # Align gene spaces: build interpolated values on source gene space,
         # incorporating target values for matching genes
@@ -565,17 +583,68 @@ def get_or_compute_recon1(
     return recon1
 
 
+def get_or_compute_recon2(
+    databank: SpatialDataBank,
+    model: nn.Module,
+    device: torch.device,
+    config: Config,
+    recon1_cache: Dict[int, Dict[str, np.ndarray]],
+    cache_path: Path,
+    batch_size: int = 64,
+    num_workers: int = 4,
+) -> Dict[int, Dict[str, np.ndarray]]:
+    """
+    Compute X_hat = M(X_0) = SpatialGT(recon1), i.e. a second reconstruction pass
+    where the full-slice input is the denoised state X_0 = recon1 = M(X).
+
+    This is the fixed control prediction (the "X line") for recon-space dual-line
+    inference (Algorithm 1). Caches to disk like recon1.
+    Returns {global_idx: {"gene_ids": ndarray, "raw_normed_values": ndarray}}.
+    """
+    if cache_path.exists():
+        print(f"[RECON2] Loading cached X_hat=M(X_0) from {cache_path}")
+        data = np.load(str(cache_path), allow_pickle=True)
+        recon2: Dict[int, Dict[str, np.ndarray]] = {}
+        for key in data.files:
+            if key.startswith("gids_"):
+                gidx = int(key[5:])
+                recon2[gidx] = {
+                    "gene_ids": data[f"gids_{gidx}"],
+                    "raw_normed_values": data[f"vals_{gidx}"],
+                }
+        print(f"[RECON2] Loaded {len(recon2)} spots from cache")
+        return recon2
+
+    print(f"[RECON2] Running X_hat = SpatialGT(X_0 = recon1) on full slice...")
+    databank.clear_runtime_spot_overrides()
+    databank.set_runtime_spot_overrides(recon1_cache)
+    loader = build_loader(databank, config, batch_size, num_workers)
+    recon2 = run_full_inference(databank, loader, model, device,
+                                desc="Recon2 = M(X_0) (full slice)")
+    databank.clear_runtime_spot_overrides()
+    print(f"[RECON2] Reconstructed {len(recon2)} spots")
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    save_dict = {}
+    for gidx, ov in recon2.items():
+        save_dict[f"gids_{gidx}"] = ov["gene_ids"]
+        save_dict[f"vals_{gidx}"] = ov["raw_normed_values"]
+    np.savez_compressed(str(cache_path), **save_dict)
+    print(f"[RECON2] Cached to {cache_path} ({cache_path.stat().st_size / 1024 / 1024:.1f} MB)")
+    return recon2
+
+
 # -----------------------------------------------------------------------------
 # Dual-line iterative inference
 # -----------------------------------------------------------------------------
 
-def compute_step_mse(
+def compute_step_rmse(
     current_state: Dict[int, Dict[str, np.ndarray]],
     prev_state: Dict[int, Dict[str, np.ndarray]],
     frozen_indices: Set[int],
 ) -> Tuple[float, int]:
-    """Mean MSE between two consecutive states for non-frozen spots."""
-    mse_values = []
+    """Mean RMSE between two consecutive states for non-frozen spots."""
+    rmse_values = []
     for gidx in current_state:
         if gidx in frozen_indices:
             continue
@@ -584,10 +653,10 @@ def compute_step_mse(
         curr_vals = current_state[gidx]["raw_normed_values"]
         prev_vals = prev_state[gidx]["raw_normed_values"]
         n = min(len(curr_vals), len(prev_vals))
-        mse_values.append(float(np.mean((curr_vals[:n] - prev_vals[:n]) ** 2)))
-    if not mse_values:
+        rmse_values.append(float(np.sqrt(np.mean((curr_vals[:n] - prev_vals[:n]) ** 2))))
+    if not rmse_values:
         return 0.0, 0
-    return float(np.mean(mse_values)), len(mse_values)
+    return float(np.mean(rmse_values)), len(rmse_values)
 
 
 def run_dual_line_inference(
@@ -609,11 +678,11 @@ def run_dual_line_inference(
     Dual-line iterative inference with patience-based early stopping.
 
     Stopping modes:
-    - "patience": stop after ``patience`` steps without MSE improvement.
-    - "retrospective": run all ``max_steps``; recommend minimum MSE step.
+    - "patience": stop after ``patience`` steps without RMSE improvement.
+    - "retrospective": run all ``max_steps``; recommend minimum RMSE step.
 
     Both modes include emergency protection: immediate stop if
-    step MSE > emergency_div_factor * best_mse.
+    step RMSE > emergency_div_factor * best_rmse.
 
     Returns (step_results, final_state, convergence_info).
     """
@@ -644,11 +713,11 @@ def run_dual_line_inference(
         x_k = run_full_inference(databank, loader, model, device, desc="X line (once)")
 
     prev_state = xp_current
-    best_mse = float("inf")
+    best_rmse = float("inf")
     best_step = 0
     steps_since_improvement = 0
     actual_steps = 0
-    mse_records: List[Dict] = []
+    rmse_records: List[Dict] = []
     final_status = "completed"
 
     for t in range(1, max_steps + 1):
@@ -689,12 +758,12 @@ def run_dual_line_inference(
                         "raw_normed_values": xp_raw_vals.astype(np.float32),
                     }
 
-        # Step MSE convergence tracking (full-slice, non-frozen)
-        step_mse, n_compared = compute_step_mse(xp_k_true, prev_state, frozen_indices)
+        # Step RMSE convergence tracking (full-slice, non-frozen)
+        step_rmse, n_compared = compute_step_rmse(xp_k_true, prev_state, frozen_indices)
 
         if n_compared > 0:
-            if step_mse < best_mse:
-                best_mse = step_mse
+            if step_rmse < best_rmse:
+                best_rmse = step_rmse
                 best_step = t
                 steps_since_improvement = 0
             else:
@@ -704,15 +773,15 @@ def run_dual_line_inference(
                 "BEST" if steps_since_improvement == 0
                 else f"patience {steps_since_improvement}/{patience}"
             )
-            print(f"  MSE(step {t-1}->{t}) = {step_mse:.8f}  "
-                  f"[best={best_mse:.8f} @ step {best_step}]  {status_mark}  "
+            print(f"  RMSE(step {t-1}->{t}) = {step_rmse:.8f}  "
+                  f"[best={best_rmse:.8f} @ step {best_step}]  {status_mark}  "
                   f"(n={n_compared})")
         else:
-            print(f"  MSE(step {t-1}->{t}) = N/A  "
+            print(f"  RMSE(step {t-1}->{t}) = N/A  "
                   f"(no non-frozen spots to compare, warm-up step)")
 
-        mse_records.append({
-            "step": t, "mse": step_mse if n_compared > 0 else None,
+        rmse_records.append({
+            "step": t, "rmse": step_rmse if n_compared > 0 else None,
             "n_spots_compared": n_compared,
             "is_best": n_compared > 0 and steps_since_improvement == 0,
             "steps_since_improvement": steps_since_improvement,
@@ -744,16 +813,16 @@ def run_dual_line_inference(
             torch.cuda.empty_cache()
 
         # Emergency divergence protection (only when we have valid comparisons)
-        if n_compared > 0 and best_mse > 0 and step_mse > emergency_div_factor * best_mse:
+        if n_compared > 0 and best_rmse > 0 and step_rmse > emergency_div_factor * best_rmse:
             final_status = "emergency_stop"
-            print(f"\n[EMERGENCY STOP] MSE {step_mse:.6f} > "
-                  f"{emergency_div_factor}x best {best_mse:.6f}")
+            print(f"\n[EMERGENCY STOP] RMSE {step_rmse:.6f} > "
+                  f"{emergency_div_factor}x best {best_rmse:.6f}")
             break
 
-        # Patience-based early stop (only after at least one valid MSE)
+        # Patience-based early stop (only after at least one valid RMSE)
         if (n_compared > 0 and stopping_mode == "patience"
                 and steps_since_improvement >= patience
-                and best_mse < float("inf")):
+                and best_rmse < float("inf")):
             final_status = "stopped_patience"
             print(f"\n[PATIENCE STOP] No improvement for {patience} steps "
                   f"(best @ step {best_step})")
@@ -768,13 +837,13 @@ def run_dual_line_inference(
         "final_status": final_status,
         "actual_steps": actual_steps,
         "best_step": best_step,
-        "best_mse": best_mse,
+        "best_rmse": best_rmse,
         "stopping_mode": stopping_mode,
         "patience": patience,
-        "mse_records": mse_records,
+        "rmse_records": rmse_records,
     }
     print(f"  [{final_status}] actual_steps={actual_steps}, best_step={best_step}, "
-          f"best_mse={best_mse:.8f}")
+          f"best_rmse={best_rmse:.8f}")
 
     return step_results, xp_current, convergence_info
 
@@ -789,36 +858,40 @@ def compute_spot_similarity(
     vec_b: np.ndarray,
     gids_b: np.ndarray,
 ) -> Dict[str, float]:
-    """Compute Pearson correlation and MSE on the common gene space."""
-    pos_a = {int(g): i for i, g in enumerate(gids_a) if int(g) >= 0}
-    pos_b = {int(g): i for i, g in enumerate(gids_b) if int(g) >= 0}
-    common = sorted(set(pos_a) & set(pos_b))
+    """Compute PCC and RMSE between two spots on their common gene space."""
+    set_a = {int(g): i for i, g in enumerate(gids_a) if int(g) >= 0}
+    set_b = {int(g): i for i, g in enumerate(gids_b) if int(g) >= 0}
+    common = sorted(set(set_a.keys()) & set(set_b.keys()))
 
     if len(common) < 10:
-        return {"pearson": float("nan"), "mse": float("nan"), "n_common_genes": len(common)}
+        return {
+            "pearson": float("nan"),
+            "rmse": float("nan"),
+            "n_common_genes": len(common),
+        }
 
-    a = np.array([vec_a[pos_a[g]] for g in common], dtype=np.float32)
-    b = np.array([vec_b[pos_b[g]] for g in common], dtype=np.float32)
+    a = np.array([vec_a[set_a[g]] for g in common], dtype=np.float32)
+    b = np.array([vec_b[set_b[g]] for g in common], dtype=np.float32)
+
     diff = a - b
-    mse = float(np.mean(diff ** 2))
+    rmse = float(np.sqrt(np.mean(diff ** 2)))
 
-    a_centered = a - a.mean()
-    b_centered = b - b.mean()
-    norm_a = np.linalg.norm(a_centered)
-    norm_b = np.linalg.norm(b_centered)
-    pearson = (
-        float(np.dot(a_centered, b_centered) / (norm_a * norm_b))
-        if norm_a > 1e-8 and norm_b > 1e-8
-        else float("nan")
-    )
-    return {"pearson": pearson, "mse": mse, "n_common_genes": len(common)}
+    a_c, b_c = a - a.mean(), b - b.mean()
+    na, nb = np.linalg.norm(a_c), np.linalg.norm(b_c)
+    pearson = float(np.dot(a_c, b_c) / (na * nb)) if na > 1e-8 and nb > 1e-8 else float("nan")
+
+    return {
+        "pearson": pearson,
+        "rmse": rmse,
+        "n_common_genes": len(common),
+    }
 
 
 def compute_step_convergence(
     step_results: Dict[int, Dict[int, Dict[str, np.ndarray]]],
     center_idx: int,
 ) -> List[Dict[str, float]]:
-    """Compute MSE between adjacent steps for center spot expression."""
+    """Compute RMSE between adjacent steps for center spot expression."""
     sorted_steps = sorted(step_results.keys())
     convergence = []
     for i in range(1, len(sorted_steps)):
@@ -832,7 +905,7 @@ def compute_step_convergence(
         convergence.append({
             "step_from": t_prev,
             "step_to": t_curr,
-            "mse": float(np.mean(diff ** 2)),
+            "rmse": float(np.sqrt(np.mean(diff ** 2))),
         })
     return convergence
 
@@ -866,6 +939,108 @@ def save_step_expression(
 
 
 # -----------------------------------------------------------------------------
+# Patch existing metrics with missing reference type
+# -----------------------------------------------------------------------------
+
+def patch_metrics(
+    existing: Dict[str, Any],
+    exp_out: Path,
+    databank: SpatialDataBank,
+    recon1_cache: Optional[Dict[int, Dict[str, np.ndarray]]],
+) -> Dict[str, Any]:
+    """
+    Supplement an existing metrics.json with whichever reference type is missing
+    (vs_recon or vs_raw). Reads step expressions from disk to recompute.
+    """
+    center_idx = existing["center_idx"]
+    target_center_idx = existing["target_center_idx"]
+
+    has_vs_recon = ("metrics_vs_recon" in existing
+                    and existing["metrics_vs_recon"] is not None)
+    has_vs_raw = ("metrics_vs_raw" in existing
+                  and existing["metrics_vs_raw"] is not None)
+
+    if has_vs_recon and has_vs_raw:
+        return existing
+
+    # Load step expressions from saved npz files
+    step_dir = exp_out / "step_expressions"
+    step_data: Dict[int, Dict[str, np.ndarray]] = {}
+    if step_dir.exists():
+        for f in sorted(step_dir.glob("step*.npz")):
+            step_num = int(f.stem.replace("step", ""))
+            data = np.load(str(f), allow_pickle=True)
+            step_data[step_num] = {
+                "gene_ids": data["gene_ids"],
+                "raw_normed_values": data["expression"],
+            }
+
+    # --- Supplement vs_raw ---
+    if not has_vs_raw:
+        raw_center = databank.get_spot_data(center_idx)
+        raw_orig_gids = np.asarray(raw_center["gene_ids"], dtype=np.int64)
+        raw_orig_vals = np.asarray(raw_center["raw_normed_values"], dtype=np.float32)
+        raw_target = databank.get_spot_data(target_center_idx)
+        raw_target_gids = np.asarray(raw_target["gene_ids"], dtype=np.int64)
+        raw_target_vals = np.asarray(raw_target["raw_normed_values"], dtype=np.float32)
+
+        baseline = compute_spot_similarity(
+            raw_orig_vals, raw_orig_gids, raw_target_vals, raw_target_gids)
+        baseline["step"] = 0
+
+        step_metrics = []
+        for step in sorted(step_data.keys()):
+            pred = step_data[step]
+            sim = compute_spot_similarity(
+                pred["raw_normed_values"], pred["gene_ids"],
+                raw_target_vals, raw_target_gids,
+            )
+            sim["step"] = step
+            step_metrics.append(sim)
+
+        existing["metrics_vs_raw"] = [baseline] + step_metrics
+
+    # --- Supplement vs_recon ---
+    if not has_vs_recon:
+        can_recon = (recon1_cache is not None
+                     and center_idx in recon1_cache
+                     and target_center_idx in recon1_cache)
+        if can_recon:
+            recon_orig_gids = recon1_cache[center_idx]["gene_ids"]
+            recon_orig_vals = recon1_cache[center_idx]["raw_normed_values"]
+            recon_target_gids = recon1_cache[target_center_idx]["gene_ids"]
+            recon_target_vals = recon1_cache[target_center_idx]["raw_normed_values"]
+
+            baseline = compute_spot_similarity(
+                recon_orig_vals, recon_orig_gids,
+                recon_target_vals, recon_target_gids)
+            baseline["step"] = 0
+
+            step_metrics = []
+            for step in sorted(step_data.keys()):
+                pred = step_data[step]
+                sim = compute_spot_similarity(
+                    pred["raw_normed_values"], pred["gene_ids"],
+                    recon_target_vals, recon_target_gids,
+                )
+                sim["step"] = step
+                step_metrics.append(sim)
+
+            existing["metrics_vs_recon"] = [baseline] + step_metrics
+        elif "metrics" in existing and not has_vs_recon:
+            existing["metrics_vs_recon"] = existing["metrics"]
+
+    # Keep backward-compat "metrics" field
+    if "metrics_vs_recon" in existing and existing["metrics_vs_recon"]:
+        existing["metrics"] = existing["metrics_vs_recon"]
+
+    with open(exp_out / "metrics.json", "w") as f:
+        json.dump(existing, f, indent=2, default=str)
+
+    return existing
+
+
+# -----------------------------------------------------------------------------
 # Single perturbation experiment
 # -----------------------------------------------------------------------------
 
@@ -887,13 +1062,26 @@ def run_single_perturbation(
     batch_size: int = 64,
     num_workers: int = 4,
     recon1_cache: Optional[Dict[int, Dict[str, np.ndarray]]] = None,
+    x_line_cache: Optional[Dict[int, Dict[str, np.ndarray]]] = None,
+    use_recon_as_x0: bool = True,
     stopping_mode: str = "patience",
     patience: int = 3,
     emergency_div_factor: float = 3.0,
 ) -> Dict[str, Any]:
     """
     Run a single perturbation experiment with patience-based early stopping.
-    Metrics are computed against raw target expression only.
+    Metrics are computed against BOTH recon1 expression (metrics_vs_recon)
+    and raw ground-truth expression (metrics_vs_raw).
+
+    Two dual-line bases (Algorithm 1):
+      use_recon_as_x0=True (default): X_0 = recon1 = M(X). Perturbation is
+        applied in the denoised space (interpolate on recon1 source/target
+        neighbors), and the X line is X_hat = M(X_0) supplied via x_line_cache
+        (recon2). The unperturbed control is therefore the model's own fixed
+        point, removing the raw reconstruction residual from the comparison.
+      use_recon_as_x0=False (legacy raw-input mode): X_0 = raw full-slice expression, the X
+        line is recon1, perturbation is applied on raw neighbor expressions.
+
     Returns metrics dict.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -907,43 +1095,70 @@ def run_single_perturbation(
     raw_target_gids = np.asarray(raw_target["gene_ids"], dtype=np.int64)
     raw_target_vals = np.asarray(raw_target["raw_normed_values"], dtype=np.float32)
 
+    has_recon = (recon1_cache is not None
+                 and center_idx in recon1_cache
+                 and target_center_idx in recon1_cache)
+    if has_recon:
+        recon_orig_gids = recon1_cache[center_idx]["gene_ids"]
+        recon_orig_vals = recon1_cache[center_idx]["raw_normed_values"]
+        recon_target_gids = recon1_cache[target_center_idx]["gene_ids"]
+        recon_target_vals = recon1_cache[target_center_idx]["raw_normed_values"]
 
     if recon1_cache is None:
         raise ValueError("recon1_cache is required for full-state dual-line inference.")
 
+    # ---------------------------------------------------------------------
+    # Dual-line base state selection (Algorithm 1):
+    #   use_recon_as_x0=True  -> X_0 = recon1 = M(X)  (denoised base, default)
+    #   use_recon_as_x0=False -> X_0 = raw           (legacy raw-input mode)
+    #
+    # The X line (fixed control prediction X_hat = M(X_0)) is supplied via
+    # x_line_cache: recon2 = M(recon1) in recon mode, recon1 = M(raw) in raw
+    # mode. Perturbation overrides are interpolated in the SAME space as X_0,
+    # so X'_0 = P(X_0) is consistent and the residual cancels in X'_0 + (M(X')-X_hat).
+    # ---------------------------------------------------------------------
+    value_source = recon1_cache if use_recon_as_x0 else None
+
     perturb_overrides = create_interpolated_perturbation(
-        databank, source_neighbors, target_neighbors, k, alpha, seed
+        databank, source_neighbors, target_neighbors, k, alpha, seed,
+        value_source=value_source,
     )
     frozen_indices = set(perturb_overrides.keys())
 
-    # Full-state dual-line setup:
-    #   X_0  = raw full-slice expression
-    #   X'_0 = raw full-slice expression with transplanted neighbor overrides
-    #
-    # recon1_cache is SpatialGT(X_0), precomputed once for the full slice and
-    # reused below as the X line. The complete X'_0 is necessary so center and
-    # all other non-frozen spots use X'_0 + (X'_k_raw - X_k), rather than falling
-    # back to single-line propagation.
     x0_state: Dict[int, Dict[str, np.ndarray]] = {}
-    for gidx in sorted(recon1_cache.keys()):
-        raw_spot = databank.get_spot_data(int(gidx))
-        x0_state[int(gidx)] = {
-            "gene_ids": np.asarray(raw_spot["gene_ids"], dtype=np.int64).copy(),
-            "raw_normed_values": np.asarray(raw_spot["raw_normed_values"], dtype=np.float32).copy(),
-        }
+    if use_recon_as_x0:
+        # X_0 = recon1 = M(X): copy the full-slice denoised state.
+        for gidx, ov in recon1_cache.items():
+            x0_state[int(gidx)] = {
+                "gene_ids": np.asarray(ov["gene_ids"], dtype=np.int64).copy(),
+                "raw_normed_values": np.asarray(ov["raw_normed_values"], dtype=np.float32).copy(),
+            }
+    else:
+        # X_0 = raw full-slice expression (legacy raw-input mode).
+        for gidx in sorted(recon1_cache.keys()):
+            raw_spot = databank.get_spot_data(int(gidx))
+            x0_state[int(gidx)] = {
+                "gene_ids": np.asarray(raw_spot["gene_ids"], dtype=np.int64).copy(),
+                "raw_normed_values": np.asarray(raw_spot["raw_normed_values"], dtype=np.float32).copy(),
+            }
 
+    # X'_0 = P(X_0): copy X_0 and override the perturbed (frozen) neighbors.
     x0_prime_state: Dict[int, Dict[str, np.ndarray]] = {
-        int(g): {
-            "gene_ids": v["gene_ids"].copy(),
-            "raw_normed_values": v["raw_normed_values"].copy(),
+        int(gidx): {
+            "gene_ids": ov["gene_ids"].copy(),
+            "raw_normed_values": ov["raw_normed_values"].copy(),
         }
-        for g, v in x0_state.items()
+        for gidx, ov in x0_state.items()
     }
     for gidx, ov in perturb_overrides.items():
         x0_prime_state[int(gidx)] = {
             "gene_ids": np.asarray(ov["gene_ids"], dtype=np.int64).copy(),
             "raw_normed_values": np.asarray(ov["raw_normed_values"], dtype=np.float32).copy(),
         }
+
+    # X line (fixed control): X_hat = M(X_0). Defaults to recon1 when no
+    # separate cache is supplied (i.e. raw-input legacy mode).
+    precomputed_x_line = x_line_cache if x_line_cache is not None else recon1_cache
 
     capture_set = {center_idx, target_center_idx}
     capture_set.update(source_neighbors)
@@ -958,7 +1173,7 @@ def run_single_perturbation(
         x0_state=x0_state,
         x0_prime_state=x0_prime_state,
         capture_indices=capture_set,
-        precomputed_x_line=recon1_cache,
+        precomputed_x_line=precomputed_x_line,
         stopping_mode=stopping_mode,
         patience=patience,
         emergency_div_factor=emergency_div_factor,
@@ -969,10 +1184,12 @@ def run_single_perturbation(
     convergence = compute_step_convergence(step_results, center_idx)
 
     step_metrics_vs_raw = []
+    step_metrics_vs_recon = []
     for step in sorted(step_results.keys()):
         if center_idx not in step_results[step]:
             continue
         pred = step_results[step][center_idx]
+
         sim_raw = compute_spot_similarity(
             pred["raw_normed_values"], pred["gene_ids"],
             raw_target_vals, raw_target_gids,
@@ -980,10 +1197,26 @@ def run_single_perturbation(
         sim_raw["step"] = step
         step_metrics_vs_raw.append(sim_raw)
 
+        if has_recon:
+            sim_recon = compute_spot_similarity(
+                pred["raw_normed_values"], pred["gene_ids"],
+                recon_target_vals, recon_target_gids,
+            )
+            sim_recon["step"] = step
+            step_metrics_vs_recon.append(sim_recon)
+
     baseline_raw = compute_spot_similarity(
         raw_orig_vals, raw_orig_gids, raw_target_vals, raw_target_gids)
     baseline_raw["step"] = 0
     metrics_vs_raw = [baseline_raw] + step_metrics_vs_raw
+
+    if has_recon:
+        baseline_recon = compute_spot_similarity(
+            recon_orig_vals, recon_orig_gids, recon_target_vals, recon_target_gids)
+        baseline_recon["step"] = 0
+        metrics_vs_recon = [baseline_recon] + step_metrics_vs_recon
+    else:
+        metrics_vs_recon = None
 
     result = {
         "center_idx": center_idx,
@@ -997,11 +1230,13 @@ def run_single_perturbation(
         "stopping_mode": stopping_mode,
         "final_status": convergence_info["final_status"],
         "seed": seed,
+        "x0_source": "recon" if use_recon_as_x0 else "raw",
         "n_perturbed_neighbors": len(frozen_indices),
         "n_source_neighbors": len(source_neighbors),
         "n_target_neighbors": len(target_neighbors),
+        "metrics_vs_recon": metrics_vs_recon,
         "metrics_vs_raw": metrics_vs_raw,
-        "metrics": metrics_vs_raw,
+        "metrics": metrics_vs_recon if metrics_vs_recon else metrics_vs_raw,
         "convergence": convergence,
         "convergence_info": convergence_info,
     }
@@ -1012,11 +1247,11 @@ def run_single_perturbation(
     conv_report = {
         "final_status": convergence_info["final_status"],
         "best_step": convergence_info["best_step"],
-        "best_mse": convergence_info["best_mse"],
+        "best_rmse": convergence_info["best_rmse"],
         "actual_steps": convergence_info["actual_steps"],
         "stopping_mode": stopping_mode,
         "patience": patience,
-        "mse_records": convergence_info["mse_records"],
+        "rmse_records": convergence_info["rmse_records"],
         "center_spot_convergence": convergence,
     }
     with open(out_dir / "convergence_report.json", "w") as f:
@@ -1055,9 +1290,13 @@ def main():
                     choices=["patience", "retrospective"],
                     help="Stopping strategy: patience (early stop) or retrospective (run all)")
     ap.add_argument("--patience", type=int, default=3,
-                    help="Stop after N steps without MSE improvement (patience mode)")
+                    help="Stop after N steps without RMSE improvement (patience mode)")
     ap.add_argument("--emergency_div_factor", type=float, default=3.0,
-                    help="Emergency stop if step MSE > factor * best MSE")
+                    help="Emergency stop if step RMSE > factor * best RMSE")
+    ap.add_argument("--x0_source", default="recon", choices=["recon", "raw"],
+                    help="Dual-line base state X_0. 'recon' (default): "
+                         "X_0=M(X), perturb in denoised space, X line = M(X_0). "
+                         "'raw' (legacy): X_0=raw, X line = M(X)=recon1.")
     ap.add_argument("--seed", type=int, default=42)
 
     # Pair selection parameters
@@ -1151,7 +1390,7 @@ def main():
     else:
         pair_range = list(range(len(pairs)))
 
-    # Compute or load SpatialGT(X_0) once for the dual-line X line.
+    # Compute or load recon1 cache (single-pass reconstruction = M(X) = X_0).
     recon1_cache_path = out_base / f"recon1_cache_{args.dataset}.npz"
     recon1_cache = get_or_compute_recon1(
         databank, model, device, config,
@@ -1159,6 +1398,24 @@ def main():
         batch_size=args.batch_size,
         num_workers=args.num_workers,
     )
+
+    # Dual-line base selection (Algorithm 1).
+    #   recon mode (default): X_0 = recon1 = M(X), X line = recon2 = M(X_0).
+    #   raw mode (legacy):     X_0 = raw,           X line = recon1 = M(X).
+    use_recon_as_x0 = (args.x0_source == "recon")
+    if use_recon_as_x0:
+        recon2_cache_path = out_base / f"recon2_cache_{args.dataset}.npz"
+        x_line_cache = get_or_compute_recon2(
+            databank, model, device, config,
+            recon1_cache=recon1_cache,
+            cache_path=recon2_cache_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+        )
+        print(f"[INFO] x0_source=recon: X_0=M(X), X line=M(X_0) (recon2)")
+    else:
+        x_line_cache = recon1_cache
+        print(f"[INFO] x0_source=raw: X_0=raw, X line=M(X) (recon1) [legacy]")
 
     # Count total experiments
     total_exps = 0
@@ -1205,9 +1462,21 @@ def main():
                         exp_out = out_base / args.dataset / direction / f"pair{pi}" / f"hop{hop}_k{k}_alpha{alpha:.1f}"
 
                         if (exp_out / "metrics.json").exists():
-                            print(f"[SKIP] {exp_tag}")
                             with open(exp_out / "metrics.json") as f:
-                                all_results.append(json.load(f))
+                                existing = json.load(f)
+                            _has_recon = ("metrics_vs_recon" in existing
+                                          and existing["metrics_vs_recon"] is not None)
+                            _has_raw = ("metrics_vs_raw" in existing
+                                        and existing["metrics_vs_raw"] is not None)
+                            if _has_recon and _has_raw:
+                                print(f"[SKIP] {exp_tag} (complete)")
+                                all_results.append(existing)
+                                continue
+                            print(f"[PATCH] {exp_tag} - supplementing "
+                                  f"{'vs_raw' if not _has_raw else 'vs_recon'}")
+                            existing = patch_metrics(
+                                existing, exp_out, databank, recon1_cache)
+                            all_results.append(existing)
                             continue
 
                         print(f"\n[{exp_count}/{total_exps}] {exp_tag}")
@@ -1230,6 +1499,8 @@ def main():
                             batch_size=args.batch_size,
                             num_workers=args.num_workers,
                             recon1_cache=recon1_cache,
+                            x_line_cache=x_line_cache,
+                            use_recon_as_x0=use_recon_as_x0,
                             stopping_mode=args.stopping_mode,
                             patience=args.patience,
                             emergency_div_factor=args.emergency_div_factor,
@@ -1256,6 +1527,7 @@ def main():
                                 "max_steps": args.max_steps,
                                 "stopping_mode": args.stopping_mode,
                                 "patience": args.patience,
+                                "x0_source": args.x0_source,
                             }, f, indent=2)
 
     # Save combined results
@@ -1264,7 +1536,7 @@ def main():
         json.dump(all_results, f, indent=2, default=str)
     print(f"\n[OK] Saved summary to {summary_path}")
 
-    # Build summary CSV for raw-target dose-response curves.
+    # Build summary CSV for dose-response curves (both reference types)
     rows = []
     for r in all_results:
         base_info = {
@@ -1275,14 +1547,16 @@ def main():
             "k": r.get("k", -1),
             "alpha": r.get("alpha", -1),
         }
-        for m in r.get("metrics_vs_raw", []) or []:
-            row = dict(base_info)
-            row["reference"] = "raw"
-            row["step"] = m.get("step", -1)
-            row["pearson"] = m.get("pearson")
-            row["mse"] = m.get("mse")
-            row["n_common_genes"] = m.get("n_common_genes")
-            rows.append(row)
+        for ref_key, ref_label in [("metrics_vs_recon", "recon"),
+                                    ("metrics_vs_raw", "raw")]:
+            for m in r.get(ref_key, []) or []:
+                row = dict(base_info)
+                row["reference"] = ref_label
+                row["step"] = m.get("step", -1)
+                row["pearson"] = m.get("pearson")
+                row["rmse"] = m.get("rmse")
+                row["n_common_genes"] = m.get("n_common_genes")
+                rows.append(row)
     if rows:
         df = pd.DataFrame(rows)
         csv_path = out_base / f"dose_response_{args.dataset}.csv"
