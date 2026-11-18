@@ -187,9 +187,8 @@ load a model.
 - `spatialgt_agent_ui/`: Agent-driven Streamlit user interface.
 - `pretrain/`: SpatialGT model architecture and data bank utilities.
 - `finetune/`: Finetuning utilities used by the Agent UI.
-- `reconstruction/`: Expression reconstruction and denoising scripts.
-- `perturbation/`: Public perturbation case-study scripts.
-- `baseline/`: Baseline method dependencies.
+- `reconstruction/`: SpatialGT expression reconstruction and denoising scripts.
+- `perturbation/`: SpatialGT perturbation case-study scripts.
 - `assets/`: Figures and static assets.
 - `requirements.txt`: Python dependency list for source installations.
 
