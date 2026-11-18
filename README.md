@@ -8,7 +8,6 @@
 [![PyTorch 2.0+](https://img.shields.io/badge/pytorch-2.0+-red.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![HuggingFace Model](https://img.shields.io/badge/%F0%9F%A4%97%20Model-SpatialGT--Pretrained-orange)](https://huggingface.co/Bgoood/SpatialGT-Pretrained)
-[![HuggingFace Embedding](https://img.shields.io/badge/%F0%9F%A4%97%20Embedding-SpatialGT--GeneEmbedding-orange)](https://huggingface.co/Bgoood/SpatialGT-GeneEmbedding)
 [![HuggingFace Environment](https://img.shields.io/badge/%F0%9F%A4%97%20Environment-SpatialGT--Environment-orange)](https://huggingface.co/Bgoood/SpatialGT-Environment)
 
 ## Overview
@@ -32,7 +31,7 @@ configuration panels.
 - [Environment Setup](#environment-setup)
   - [Option 1: Packaged Environment (Recommended)](#option-1-packaged-environment-recommended)
   - [Option 2: Build From Scratch](#option-2-build-from-scratch)
-- [Models And Embeddings](#models-and-embeddings)
+- [Models](#models)
 - [Repository Structure](#repository-structure)
 - [License](#license)
 - [Contact](#contact)
@@ -155,23 +154,21 @@ Then launch the UI against this environment:
 bash spatialgt_agent_ui/run.sh --spatialgt /path/to/your/conda/envs/spatialgt
 ```
 
-## Models And Embeddings
+## Models
 
-Pretrained and finetuned checkpoints, along with gene embeddings, are hosted on
+Pretrained and finetuned checkpoints are hosted on
 Hugging Face:
 
 | Resource | Description | Link |
 |----------|-------------|------|
 | SpatialGT-Pretrained | Pretrained on the spatial transcriptomics atlas | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-Pretrained) |
-| SpatialGT-GeneEmbedding | Pretrained gene embeddings | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-GeneEmbedding) |
 | SpatialGT-Environment | Packaged runtime environment | [🤗 Hugging Face](https://huggingface.co/Bgoood/SpatialGT-Environment) |
 
 Download with the Hugging Face CLI:
 
 ```bash
-# Pretrained model and gene embeddings
+# Pretrained model
 huggingface-cli download Bgoood/SpatialGT-Pretrained --local-dir model/pretrain_ckpt
-huggingface-cli download Bgoood/SpatialGT-GeneEmbedding --local-dir gene_embedding
 ```
 
 Or from Python:
@@ -180,7 +177,6 @@ Or from Python:
 from huggingface_hub import snapshot_download
 
 snapshot_download(repo_id="Bgoood/SpatialGT-Pretrained", local_dir="model/pretrain_ckpt")
-snapshot_download(repo_id="Bgoood/SpatialGT-GeneEmbedding", local_dir="gene_embedding")
 ```
 
 The Agent UI can also download a checkpoint from Hugging Face directly when you
@@ -197,7 +193,7 @@ load a model.
 - `assets/`: Figures and static assets.
 - `requirements.txt`: Python dependency list for source installations.
 
-Large assets (model checkpoints, gene embeddings, example data, outputs, and
+Large assets (model checkpoints, example data, outputs, and
 packaged environments) are hosted on Hugging Face and intentionally excluded
 from this repository.
 
